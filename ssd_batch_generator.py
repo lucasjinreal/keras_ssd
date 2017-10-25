@@ -190,28 +190,6 @@ class BatchGenerator:
                   labels_path=None,
                   input_format=None,
                   ret=False):
-        '''
-        Arguments:
-            labels_path (str, optional): The filepath to a CSV file that contains one ground truth bounding box per line
-                and each line contains the following six items: image file name, class ID, xmin, xmax, ymin, ymax.
-                The six items do not have to be in a specific order, but they must be the first six columns of
-                each line. The order of these items in the CSV file must be specified in `input_format`.
-                The class ID is an integer greater than zero. Class ID 0 is reserved for the background class.
-                `xmin` and `xmax` are the left-most and right-most absolute horizontal coordinates of the box,
-                `ymin` and `ymax` are the top-most and bottom-most absolute vertical coordinates of the box.
-                The image name is expected to be just the name of the image file without the directory path
-                at which the image is located. Defaults to `None`.
-            input_format (list, optional): A list of six strings representing the order of the six items
-                image file name, class ID, xmin, xmax, ymin, ymax in the input CSV file. The expected strings
-                are 'image_name', 'xmin', 'xmax', 'ymin', 'ymax', 'class_id'. Defaults to `None`.
-            ret (bool, optional): Whether or not the image filenames and labels are to be returned.
-                Defaults to `False`.
-
-        Returns:
-            None by default, optionally the image filenames and labels.
-        '''
-
-        # If we get arguments in this call, set them
         if not labels_path is None: self.labels_path = labels_path
         if not input_format is None: self.input_format = input_format
 
@@ -237,13 +215,12 @@ class BatchGenerator:
                     continue
                 else:
                     if self.include_classes == 'all' or int(i[self.input_format.index(
-                            'class_id')].strip()) in self.include_classes:  # If the class_id is among the classes that are to be included in the dataset...
-                        obj = []  # Store the box class and coordinates here
-                        obj.append(i[self.input_format.index(
-                            'image_name')].strip())  # Select the image name column in the input format and append its content to `obj`
-                        for item in self.box_output_format:  # For each item in the output format...
-                            obj.append(int(i[self.input_format.index(
-                                item)].strip()))  # ...select the respective column in the input format and append it to `obj`
+                            'class_id')].strip()) in self.include_classes:
+                        # If the class_id is among the classes that are to be included in the dataset...
+                        obj = []
+                        obj.append(i[self.input_format.index('image_name')].strip())
+                        for item in self.box_output_format:
+                            obj.append(int(i[self.input_format.index(item)].strip()))
                         data.append(obj)
 
         data = sorted(data)  # The data needs to be sorted, otherwise the next step won't give the correct result
@@ -261,8 +238,8 @@ class BatchGenerator:
                     self.labels.append(np.stack(current_labels, axis=0))
                     self.filenames.append(current_file)
             else:
-                if i[
-                    0] == current_file:  # If this box (i.e. this line of the CSV file) belongs to the current image file
+                if i[0] == current_file:
+                    # If this box (i.e. this line of the CSV file) belongs to the current image file
                     current_labels.append(i[1:])
                     if idx == len(data) - 1:  # If this is the last line of the CSV file
                         self.labels.append(np.stack(current_labels, axis=0))
@@ -277,6 +254,52 @@ class BatchGenerator:
         if ret:  # In case we want to return these
             return self.filenames, self.labels
 
+    def parse_txt(self, image_dir, label_file, ret=False):
+        if os.path.exists(image_dir):
+            found_bg = False
+            classes_count = {}
+            class_mapping = {}
+
+            all_images_labels = {}
+            with open(label_file, 'r') as f:
+                print('Parsing annotation files')
+                for line in f:
+                    line_split = line.strip().split(',')
+                    (filename, x1, y1, x2, y2, class_name) = line_split
+
+                    if class_name not in classes_count:
+                        classes_count[class_name] = 1
+                    else:
+                        classes_count[class_name] += 1
+
+                    if class_name not in class_mapping:
+                        if class_name == 'bg' and not found_bg:
+                            print('Found class name with special name bg. Will be treated as a'
+                                  ' background region (this is usually for hard negative mining).')
+                            found_bg = True
+                        class_mapping[class_name] = len(class_mapping)
+                    if filename not in all_images_labels:
+                        all_images_labels[filename] = []
+                    all_images_labels[filename].append([class_mapping[class_name],
+                                                        float(x1), float(y1), float(x2), float(y2)])
+            print('class count: ', classes_count)
+            print('class mapping: ', class_mapping)
+            self.filenames = []
+            self.labels = []
+            for k, v in all_images_labels.items():
+                self.filenames.append(os.path.join(image_dir, k))
+                if len(v) == 1:
+                    self.labels.append(np.stack(v, 0))
+                else:
+                    self.labels.append(v)
+            print(len(self.filenames))
+            print(len(self.labels))
+            if ret:
+                return self.filenames, self.labels
+        else:
+            print('{} not exist.'.format(image_dir))
+            exit(0)
+
     def parse_xml(self,
                   annotations_path=None,
                   image_set_path=None,
@@ -290,32 +313,6 @@ class BatchGenerator:
                   exclude_truncated=False,
                   exclude_difficult=False,
                   ret=False):
-        '''
-        This is an XML parser for the Pascal VOC datasets. It might be applicable to other datasets with minor changes to
-        the code, but in its current form it expects the data format and XML tags of the Pascal VOC datasets.
-
-        Arguments:
-            annotations_path (str, optional): The path to the directory that contains the annotation XML files for
-                the images. The directory must contain one XML file per image and name of the XML file must be the
-                image ID. The content of the XML files must be in the Pascal VOC format. Defaults to `None`.
-            image_set_path (str, optional): The path to the directory that contains a text file with the image
-                set to be loaded. Defaults to `None`.
-            image_set (str, optional): The name of the image set text file to be loaded, ending in '.txt'.
-                This text file simply contains one image ID per line and nothing else. Defaults to `None`.
-            classes (list, optional): A list containing the names of the object classes as found in the
-                `name` XML tags. Must include the class `background` as the first list item. The order of this list
-                defines the class IDs. Defaults to the list of Pascal VOC classes in alphabetical order.
-            exclude_truncated (bool, optional): If `True`, excludes boxes that are labeled as 'truncated'.
-                Defaults to `False`.
-            exclude_difficult (bool, optional): If `True`, excludes boxes that are labeled as 'difficult'.
-                Defaults to `False`.
-            ret (bool, optional): Whether or not the image filenames and labels are to be returned.
-                Defaults to `False`.
-
-        Returns:
-            None by default, optionally the image filenames and labels.
-        '''
-
         if not annotations_path is None: self.annotations_path = annotations_path
         if not image_set_path is None: self.image_set_path = image_set_path
         if not image_set is None: self.image_set = image_set
@@ -395,94 +392,11 @@ class BatchGenerator:
                  limit_boxes=True,
                  include_thresh=0.3,
                  diagnostics=False):
-        '''
-        Generate batches of samples and corresponding labels indefinitely from
-        lists of filenames and labels.
-
-        Returns two Numpy arrays, one containing the next `batch_size` samples
-        from `filenames`, the other containing the corresponding labels from
-        `labels`.
-
-        Shuffles `filenames` and `labels` consistently after each complete pass.
-
-        Can perform image transformations for data conversion and data augmentation.
-        `resize`, `gray`, and `equalize` are image conversion tools and should be
-        used consistently during training and inference. The remaining transformations
-        serve for data augmentation. Each data augmentation process can set its own
-        independent application probability. The transformations are performed
-        in the order of their arguments, i.e. equalization is performed first,
-        grayscale conversion is performed last.
-
-        `prob` works the same way in all arguments in which it appears. It must be a float in [0,1]
-        and determines the probability that the respective transform is applied to a given image.
-
-        All conversions and transforms default to `False`.
-
-        Arguments:
-            batch_size (int, optional): The size of the batches to be generated. Defaults to 32.
-            train (bool, optional): Whether or not the generator is used in training mode. If `True`, then the labels
-                will be transformed into the format that the SSD cost function requires. Otherwise,
-                the output format of the labels is identical to the input format. Defaults to `True`.
-            ssd_box_encoder (SSDBoxEncoder, optional): Only required if `train = True`. An SSDBoxEncoder object
-                to encode the ground truth labels to the required format for training an SSD model.
-            equalize (bool, optional): If `True`, performs histogram equalization on the images.
-                This can improve contrast and lead the improved model performance.
-            brightness (tuple, optional): `False` or a tuple containing three floats, `(min, max, prob)`.
-                Scales the brightness of the image by a factor randomly picked from a uniform
-                distribution in the boundaries of `[min, max]`. Both min and max must be >=0.
-            flip (float, optional): `False` or a float in [0,1], see `prob` above. Flip the image horizontally.
-                The respective box coordinates are adjusted accordingly.
-            translate (tuple, optional): `False` or a tuple, with the first two elements tuples containing
-                two integers each, and the third element a float: `((min, max), (min, max), prob)`.
-                The first tuple provides the range in pixels for horizontal shift of the image,
-                the second tuple for vertical shift. The number of pixels to shift the image
-                by is uniformly distributed within the boundaries of `[min, max]`, i.e. `min` is the number
-                of pixels by which the image is translated at least. Both `min` and `max` must be >=0.
-                The respective box coordinates are adjusted accordingly.
-            scale (tuple, optional): `False` or a tuple containing three floats, `(min, max, prob)`.
-                Scales the image by a factor randomly picked from a uniform distribution in the boundaries
-                of `[min, max]`. Both min and max must be >=0.
-            random_crop (tuple, optional): `False` or a tuple of four integers, `(height, width, min_1_object, max_#_trials)`,
-                where `height` and `width` are the height and width of the patch that is to be cropped out at a random
-                position in the input image. Note that `height` and `width` can be arbitrary - they are allowed to be larger
-                than the image height and width, in which case the original image will be randomly placed on a black background
-                canvas of size `(height, width)`. `min_1_object` is either 0 or 1. If 1, there must be at least one detectable
-                object remaining in the image for the crop to be valid, and if 0, crops with no detectable objects left in the
-                image patch are allowed. `max_#_trials` is only relevant if `min_1_object == 1` and sets the maximum number
-                of attempts to get a valid crop. If no valid crop was obtained within this maximum number of attempts,
-                the respective image will be removed from the batch without replacement (i.e. for each removed image, the batch
-                will be one sample smaller). Defaults to `False`.
-            crop (tuple, optional): `False` or a tuple of four integers, `(crop_top, crop_bottom, crop_left, crop_right)`,
-                with the number of pixels to crop off of each side of the images.
-                The targets are adjusted accordingly. Note: Cropping happens before resizing.
-            resize (tuple, optional): `False` or a tuple of 2 integers for the desired output
-                size of the images in pixels. The expected format is `(width, height)`.
-                The box coordinates are adjusted accordingly. Note: Resizing happens after cropping.
-            gray (bool, optional): If `True`, converts the images to grayscale.
-            limit_boxes (bool, optional): If `True`, limits box coordinates to stay within image boundaries
-                post any transformation. This should always be set to `True`, even if you set `include_thresh`
-                to 0. I don't even know why I made this an option. If this is set to `False`, you could
-                end up with some boxes that lie entirely outside the image boundaries after a given transformation
-                and such boxes would of course not make any sense and have a strongly adverse effect on the learning.
-            include_thresh (float, optional): Only relevant if `limit_boxes` is `True`. Determines the minimum
-                fraction of the area of a ground truth box that must be left after limiting in order for the box
-                to still be included in the batch data. If set to 0, all boxes are kept except those which lie
-                entirely outside of the image bounderies after limiting. If set to 1, only boxes that did not
-                need to be limited at all are kept. Defaults to 0.3.
-            diagnostics (bool, optional): If `True`, yields three additional output items:
-                1) A list of the image file names in the batch.
-                2) An array with the original, unaltered images.
-                3) A list with the original, unaltered labels.
-                This can be useful for diagnostic purposes. Defaults to `False`. Only works if `train = True`.
-
-        Yields:
-            The next batch as a tuple containing a Numpy array that contains the images and a Python list
-            that contains the corresponding labels for each image as 2D Numpy arrays. The output format
-            of the labels is according to the `box_output_format` that was specified in the constructor.
-        '''
-
         self.filenames, self.labels = shuffle(self.filenames, self.labels)  # Shuffle the data before we begin
         current = 0
+
+        print('all files shape: ', np.asarray(self.filenames).shape)
+        print('all labels shape: ', np.asarray(self.labels).shape)
 
         # Find out the indices of the box coordinates in the label data
         xmin = self.box_output_format.index('xmin')
@@ -516,13 +430,15 @@ class BatchGenerator:
             # At this point we're done producing the batch. Now perform some
             # optional image transformations:
 
-            batch_items_to_remove = []  # In case we need to remove any images from the batch because of failed random cropping, store their indices in this list
+            batch_items_to_remove = []
+            # In case we need to remove any images from the batch because of failed random
+            # cropping, store their indices in this list
 
             for i in range(len(batch_X)):
 
                 img_height, img_width, ch = batch_X[i].shape
-                batch_y[i] = np.array(batch_y[
-                                          i])  # Convert labels into an array (in case it isn't one already), otherwise the indexing below breaks
+                batch_y[i] = np.array(batch_y[i])
+                # Convert labels into an array (in case it isn't one already), otherwise the indexing below breaks
 
                 if equalize:
                     batch_X[i] = histogram_eq(batch_X[i])
@@ -540,8 +456,8 @@ class BatchGenerator:
                     p = np.random.uniform(0, 1)
                     if p >= (1 - flip):
                         batch_X[i] = _flip(batch_X[i])
-                        batch_y[i][:, [xmin, xmax]] = img_width - batch_y[i][:, [xmax,
-                                                                                 xmin]]  # xmin and xmax are swapped when mirrored
+                        batch_y[i][:, [xmin, xmax]] = img_width - batch_y[i][:, [xmax, xmin]]
+                        # xmin and xmax are swapped when mirrored
 
                 if translate:
                     p = np.random.uniform(0, 1)
@@ -562,8 +478,10 @@ class BatchGenerator:
                             y_coords[y_coords >= img_height] = img_height - 1
                             y_coords[y_coords < 0] = 0
                             batch_y[i][:, [ymin, ymax]] = y_coords
-                            # Some objects might have gotten pushed so far outside the image boundaries in the transformation
-                            # process that they don't serve as useful training examples anymore, because too little of them is
+                            # Some objects might have gotten pushed so far outside the
+                            # image boundaries in the transformation
+                            # process that they don't serve as useful training examples
+                            # anymore, because too little of them is
                             # visible. We'll remove all boxes that we had to limit so much that their area is less than
                             # `include_thresh` of the box area before limiting.
                             before_area = (before_limiting[:, xmax] - before_limiting[:, xmin]) * (
@@ -572,18 +490,20 @@ class BatchGenerator:
                             batch_y[i][:, ymax] - batch_y[i][:, ymin])
                             if include_thresh == 0:
                                 batch_y[i] = batch_y[i][
-                                    after_area > include_thresh * before_area]  # If `include_thresh == 0`, we want to make sure that boxes with area 0 get thrown out, hence the ">" sign instead of the ">=" sign
+                                    after_area > include_thresh * before_area]
+                                # If `include_thresh == 0`, we want to make sure that boxes
+                                #  with area 0 get thrown out, hence the ">" sign instead of the ">=" sign
                             else:
                                 batch_y[i] = batch_y[i][
-                                    after_area >= include_thresh * before_area]  # Especially for the case `include_thresh == 1` we want the ">=" sign, otherwise no boxes would be left at all
+                                    after_area >= include_thresh * before_area]
+                                # Especially for the case `include_thresh == 1` we want the ">=" sign,
+                                # otherwise no boxes would be left at all
 
                 if scale:
                     p = np.random.uniform(0, 1)
                     if p >= (1 - scale[2]):
-                        # Rescale the image and return the transformation matrix M so we can use it to adjust the box coordinates
                         batch_X[i], M, scale_factor = _scale(batch_X[i], scale[0], scale[1])
                         # Adjust the box coordinates
-                        # Transform two opposite corner points of the rectangular boxes using the transformation matrix `M`
                         toplefts = np.array([batch_y[i][:, xmin], batch_y[i][:, ymin], np.ones(batch_y[i].shape[0])])
                         bottomrights = np.array(
                             [batch_y[i][:, xmax], batch_y[i][:, ymax], np.ones(batch_y[i].shape[0])])
@@ -603,8 +523,6 @@ class BatchGenerator:
                             y_coords[y_coords >= img_height] = img_height - 1
                             y_coords[y_coords < 0] = 0
                             batch_y[i][:, [ymin, ymax]] = y_coords
-                            # Some objects might have gotten pushed so far outside the image boundaries in the transformation
-                            # process that they don't serve as useful training examples anymore, because too little of them is
                             # visible. We'll remove all boxes that we had to limit so much that their area is less than
                             # `include_thresh` of the box area before limiting.
                             before_area = (before_limiting[:, xmax] - before_limiting[:, xmin]) * (
@@ -613,40 +531,34 @@ class BatchGenerator:
                             batch_y[i][:, ymax] - batch_y[i][:, ymin])
                             if include_thresh == 0:
                                 batch_y[i] = batch_y[i][
-                                    after_area > include_thresh * before_area]  # If `include_thresh == 0`, we want to make sure that boxes with area 0 get thrown out, hence the ">" sign instead of the ">=" sign
+                                    after_area > include_thresh * before_area]
                             else:
                                 batch_y[i] = batch_y[i][
-                                    after_area >= include_thresh * before_area]  # Especially for the case `include_thresh == 1` we want the ">=" sign, otherwise no boxes would be left at all
-
+                                    after_area >= include_thresh * before_area]
                 if random_crop:
                     # Compute how much room we have in both dimensions to make a random crop.
-                    # A negative number here means that we want to crop out a patch that is larger than the original image in the respective dimension,
-                    # in which case we will create a black background canvas onto which we will randomly place the image.
                     y_range = img_height - random_crop[0]
                     x_range = img_width - random_crop[1]
-                    # Keep track of the number of trials and of whether or not the most recent crop contains at least one object
                     min_1_object_fulfilled = False
                     trial_counter = 0
                     while (not min_1_object_fulfilled) and (trial_counter < random_crop[3]):
                         # Select a random crop position from the possible crop positions
                         if y_range >= 0:
-                            crop_ymin = np.random.randint(0,
-                                                          y_range + 1)  # There are y_range + 1 possible positions for the crop in the vertical dimension
+                            crop_ymin = np.random.randint(0, y_range + 1)
                         else:
                             crop_ymin = np.random.randint(0,
-                                                          -y_range + 1)  # The possible positions for the image on the background canvas in the vertical dimension
+                                                          -y_range + 1)
                         if x_range >= 0:
                             crop_xmin = np.random.randint(0,
-                                                          x_range + 1)  # There are x_range + 1 possible positions for the crop in the horizontal dimension
+                                                          x_range + 1)
                         else:
                             crop_xmin = np.random.randint(0,
-                                                          -x_range + 1)  # The possible positions for the image on the background canvas in the horizontal dimension
+                                                          -x_range + 1)
                         # Perform the crop
-                        if y_range >= 0 and x_range >= 0:  # If the patch to be cropped out is smaller than the original image in both dimenstions, we just perform a regular crop
+                        if y_range >= 0 and x_range >= 0:
                             # Crop the image
                             patch_X = np.copy(
                                 batch_X[i][crop_ymin:crop_ymin + random_crop[0], crop_xmin:crop_xmin + random_crop[1]])
-                            # Translate the box coordinates into the new coordinate system: Cropping shifts the origin by `(crop_ymin, crop_xmin)`
                             patch_y = np.copy(batch_y[i])
                             patch_y[:, [ymin, ymax]] -= crop_ymin
                             patch_y[:, [xmin, xmax]] -= crop_xmin
@@ -662,16 +574,15 @@ class BatchGenerator:
                                 x_coords[x_coords < 0] = 0
                                 x_coords[x_coords >= random_crop[1]] = random_crop[1] - 1
                                 patch_y[:, [xmin, xmax]] = x_coords
-                        elif y_range >= 0 and x_range < 0:  # If the crop is larger than the original image in the horizontal dimension only,...
+                        elif y_range >= 0 and x_range < 0:
                             # Crop the image
                             patch_X = np.copy(batch_X[i][crop_ymin:crop_ymin + random_crop[
                                 0]])  # ...crop the vertical dimension just as before,...
                             canvas = np.zeros((random_crop[0], random_crop[1], patch_X.shape[2]),
-                                              dtype=np.uint8)  # ...generate a blank background image to place the patch onto,...
+                                              dtype=np.uint8)
                             canvas[:,
-                            crop_xmin:crop_xmin + img_width] = patch_X  # ...and place the patch onto the canvas at the random `crop_xmin` position computed above.
+                            crop_xmin:crop_xmin + img_width] = patch_X
                             patch_X = canvas
-                            # Translate the box coordinates into the new coordinate system: In this case, the origin is shifted by `(crop_ymin, -crop_xmin)`
                             patch_y = np.copy(batch_y[i])
                             patch_y[:, [ymin, ymax]] -= crop_ymin
                             patch_y[:, [xmin, xmax]] += crop_xmin
@@ -683,16 +594,14 @@ class BatchGenerator:
                                 y_coords[y_coords < 0] = 0
                                 y_coords[y_coords >= random_crop[0]] = random_crop[0] - 1
                                 patch_y[:, [ymin, ymax]] = y_coords
-                        elif y_range < 0 and x_range >= 0:  # If the crop is larger than the original image in the vertical dimension only,...
+                        elif y_range < 0 and x_range >= 0:
                             # Crop the image
                             patch_X = np.copy(batch_X[i][:, crop_xmin:crop_xmin + random_crop[
-                                1]])  # ...crop the horizontal dimension just as in the first case,...
+                                1]])
                             canvas = np.zeros((random_crop[0], random_crop[1], patch_X.shape[2]),
-                                              dtype=np.uint8)  # ...generate a blank background image to place the patch onto,...
-                            canvas[crop_ymin:crop_ymin + img_height,
-                            :] = patch_X  # ...and place the patch onto the canvas at the random `crop_ymin` position computed above.
+                                              dtype=np.uint8)
+                            canvas[crop_ymin:crop_ymin + img_height, :] = patch_X
                             patch_X = canvas
-                            # Translate the box coordinates into the new coordinate system: In this case, the origin is shifted by `(-crop_ymin, crop_xmin)`
                             patch_y = np.copy(batch_y[i])
                             patch_y[:, [ymin, ymax]] += crop_ymin
                             patch_y[:, [xmin, xmax]] -= crop_xmin
@@ -707,17 +616,16 @@ class BatchGenerator:
                         else:  # If the crop is larger than the original image in both dimensions,...
                             patch_X = np.copy(batch_X[i])
                             canvas = np.zeros((random_crop[0], random_crop[1], patch_X.shape[2]),
-                                              dtype=np.uint8)  # ...generate a blank background image to place the patch onto,...
+                                              dtype=np.uint8)
                             canvas[crop_ymin:crop_ymin + img_height,
-                            crop_xmin:crop_xmin + img_width] = patch_X  # ...and place the patch onto the canvas at the random `(crop_ymin, crop_xmin)` position computed above.
+                            crop_xmin:crop_xmin + img_width] = patch_X
                             patch_X = canvas
-                            # Translate the box coordinates into the new coordinate system: In this case, the origin is shifted by `(-crop_ymin, -crop_xmin)`
+                            # Translate the box coordinates into the new coordinate system:
+                            # In this case, the origin is shifted by `(-crop_ymin, -crop_xmin)`
                             patch_y = np.copy(batch_y[i])
                             patch_y[:, [ymin, ymax]] += crop_ymin
                             patch_y[:, [xmin, xmax]] += crop_xmin
                             # Note that no limiting is necessary in this case
-                        # Some objects might have gotten pushed so far outside the image boundaries in the transformation
-                        # process that they don't serve as useful training examples anymore, because too little of them is
                         # visible. We'll remove all boxes that we had to limit so much that their area is less than
                         # `include_thresh` of the box area before limiting.
                         if limit_boxes and (y_range >= 0 or x_range >= 0):
@@ -726,14 +634,19 @@ class BatchGenerator:
                             after_area = (patch_y[:, xmax] - patch_y[:, xmin]) * (patch_y[:, ymax] - patch_y[:, ymin])
                             if include_thresh == 0:
                                 patch_y = patch_y[
-                                    after_area > include_thresh * before_area]  # If `include_thresh == 0`, we want to make sure that boxes with area 0 get thrown out, hence the ">" sign instead of the ">=" sign
+                                    after_area > include_thresh * before_area]
+                                # If `include_thresh == 0`, we want to make sure that boxes
+                                # with area 0 get thrown out, hence the ">" sign instead of the ">=" sign
                             else:
                                 patch_y = patch_y[
-                                    after_area >= include_thresh * before_area]  # Especially for the case `include_thresh == 1` we want the ">=" sign, otherwise no boxes would be left at all
+                                    after_area >= include_thresh * before_area]
+                                # Especially for the case `include_thresh == 1` we want the ">=" sign,
+                                # otherwise no boxes would be left at all
                         trial_counter += 1  # We've just used one of our trials
                         # Check if we have found a valid crop
-                        if random_crop[
-                            2] == 0:  # If `min_1_object == 0`, break out of the while loop after the first loop because we are fine with whatever crop we got
+                        if random_crop[2] == 0:
+                            # If `min_1_object == 0`, break out of the while loop after
+                            # the first loop because we are fine with whatever crop we got
                             batch_X[i] = patch_X  # The cropped patch becomes our new batch item
                             batch_y[i] = patch_y  # The adjusted boxes become our new labels for this batch item
                             # Update the image size so that subsequent transformations can work correctly
@@ -749,14 +662,18 @@ class BatchGenerator:
                             img_height = random_crop[0]
                             img_width = random_crop[1]
                         elif (trial_counter >= random_crop[3]) and (
-                        not i in batch_items_to_remove):  # If we've reached the trial limit and still not found a valid crop, remove this image from the batch
+                        not i in batch_items_to_remove):
+                            # If we've reached the trial limit and still not found a valid
+                            #  crop, remove this image from the batch
                             batch_items_to_remove.append(i)
 
                 if crop:
                     # Crop the image
                     batch_X[i] = np.copy(batch_X[i][crop[0]:img_height - crop[1], crop[2]:img_width - crop[3]])
-                    # Translate the box coordinates into the new coordinate system if necessary: The origin is shifted by `(crop[0], crop[2])` (i.e. by the top and left crop values)
-                    # If nothing was cropped off from the top or left of the image, the coordinate system stays the same as before
+                    # Translate the box coordinates into the new coordinate system
+                    # if necessary: The origin is shifted by `(crop[0], crop[2])` (i.e. by the top and left crop values)
+                    # If nothing was cropped off from the top or left of the image,
+                    # the coordinate system stays the same as before
                     if crop[0] > 0:
                         batch_y[i][:, [ymin, ymax]] -= crop[0]
                     if crop[2] > 0:
@@ -767,8 +684,10 @@ class BatchGenerator:
                     # Limit the box coordinates to lie within the new image boundaries
                     if limit_boxes:
                         before_limiting = np.copy(batch_y[i])
-                        # We only need to check those box coordinates that could possibly have been affected by the cropping
-                        # For example, if we only crop off the top and/or bottom of the image, there is no need to check the x-coordinates
+                        # We only need to check those box coordinates that could
+                        # possibly have been affected by the cropping
+                        # For example, if we only crop off the top and/or bottom of
+                        # the image, there is no need to check the x-coordinates
                         if crop[0] > 0:
                             y_coords = batch_y[i][:, [ymin, ymax]]
                             y_coords[y_coords < 0] = 0
@@ -785,8 +704,10 @@ class BatchGenerator:
                             x_coords = batch_y[i][:, [xmin, xmax]]
                             x_coords[x_coords >= img_width] = img_width - 1
                             batch_y[i][:, [xmin, xmax]] = x_coords
-                        # Some objects might have gotten pushed so far outside the image boundaries in the transformation
-                        # process that they don't serve as useful training examples anymore, because too little of them is
+                        # Some objects might have gotten pushed so far outside
+                        #  the image boundaries in the transformation
+                        # process that they don't serve as useful training
+                        # examples anymore, because too little of them is
                         # visible. We'll remove all boxes that we had to limit so much that their area is less than
                         # `include_thresh` of the box area before limiting.
                         before_area = (before_limiting[:, xmax] - before_limiting[:, xmin]) * (
@@ -795,17 +716,23 @@ class BatchGenerator:
                         batch_y[i][:, ymax] - batch_y[i][:, ymin])
                         if include_thresh == 0:
                             batch_y[i] = batch_y[i][
-                                after_area > include_thresh * before_area]  # If `include_thresh == 0`, we want to make sure that boxes with area 0 get thrown out, hence the ">" sign instead of the ">=" sign
+                                after_area > include_thresh * before_area]
+                            # If `include_thresh == 0`, we want to make sure that boxes with
+                            # area 0 get thrown out, hence the ">" sign instead of the ">=" sign
                         else:
                             batch_y[i] = batch_y[i][
-                                after_area >= include_thresh * before_area]  # Especially for the case `include_thresh == 1` we want the ">=" sign, otherwise no boxes would be left at all
+                                after_area >= include_thresh * before_area]
+                            # Especially for the case `include_thresh == 1` we want the ">="
+                            # sign, otherwise no boxes would be left at all
 
                 if resize:
                     batch_X[i] = cv2.resize(batch_X[i], dsize=resize)
                     batch_y[i][:, [xmin, xmax]] = (batch_y[i][:, [xmin, xmax]] * (resize[0] / img_width)).astype(np.int)
                     batch_y[i][:, [ymin, ymax]] = (batch_y[i][:, [ymin, ymax]] * (resize[1] / img_height)).astype(
                         np.int)
-                    img_width, img_height = resize  # Updating these at this point is unnecessary, but it's one fewer source of error if this method gets expanded in the future
+                    img_width, img_height = resize
+                    # Updating these at this point is unnecessary, but it's
+                    # one fewer source of error if this method gets expanded in the future
 
                 if gray:
                     batch_X[i] = np.expand_dims(cv2.cvtColor(batch_X[i], cv2.COLOR_RGB2GRAY), 3)
@@ -821,8 +748,10 @@ class BatchGenerator:
                 y_true = ssd_box_encoder.encode_y(
                     batch_y)  # Encode the labels into the `y_true` tensor that the cost function needs
 
-            # CAUTION: Converting `batch_X` into an array will result in an empty batch if the images have varying sizes.
-            #          At this point, all images have to have the same size, otherwise you will get an error during training.
+            # CAUTION: Converting `batch_X` into an array will result in an empty
+            # batch if the images have varying sizes.
+            #          At this point, all images have to have the same
+            #  size, otherwise you will get an error during training.
             if train:
                 if diagnostics:
                     yield (np.array(batch_X), y_true, batch_y, this_filenames, original_images, original_labels)

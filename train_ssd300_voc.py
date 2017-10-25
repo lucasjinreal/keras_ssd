@@ -37,9 +37,12 @@ variances = [0.1, 0.1, 0.2, 0.2]
 coords = 'centroids'
 normalize_coords = True
 
+model_save_dir = './model'
+model_file = os.path.join(model_save_dir, 'ssd300_model.h5')
+model_weights_file = os.path.join(model_save_dir, 'ssd300_weights.h5')
+
 
 def build_model():
-    model_file = './model/ssd300_model.h5'
     K.clear_session()
     model, predictor_sizes = ssd_300(image_size=(img_height, img_width, img_channels),
                                      n_classes=n_classes,
@@ -54,21 +57,25 @@ def build_model():
                                      coords=coords,
                                      normalize_coords=normalize_coords)
     if os.path.exists(model_file):
-        model.load_weights(model_file)
+        model.load_weights(model_weights_file)
     return model, predictor_sizes
 
 
 def lr_schedule(epoch):
-    if epoch <= 20: return 0.001
-    else: return 0.0001
+    if epoch <= 20:
+        return 0.001
+    else:
+        return 0.0001
 
 
 def train():
-    batch_size = 32
-    adam = Adam(lr=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=5e-05)
-    ssd_loss = SSDLoss(neg_pos_ratio=3, n_neg_min=0, alpha=0.1)
+    if not os.path.exists(model_save_dir):
+        os.makedirs(model_save_dir)
+    batch_size = 16
 
     model, predictor_sizes = build_model()
+    adam = Adam(lr=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=5e-05)
+    ssd_loss = SSDLoss(neg_pos_ratio=3, n_neg_min=0, alpha=0.1)
     model.compile(optimizer=adam, loss=ssd_loss.compute_loss)
 
     ssd_box_encoder = SSDBoxEncoder(img_height=img_height,
@@ -88,12 +95,12 @@ def train():
                                     coords=coords,
                                     normalize_coords=normalize_coords)
 
-    train_dataset = BatchGenerator(images_path='./Datasets/VOCdevkit/VOC2012/JPEGImages/',
+    train_dataset = BatchGenerator(images_path='./data/VOCdevkit/VOC2012/JPEGImages/',
                                    include_classes='all',
                                    box_output_format=['class_id', 'xmin', 'xmax', 'ymin', 'ymax'])
 
-    train_dataset.parse_xml(annotations_path='./Datasets/VOCdevkit/VOC2012/Annotations/',
-                            image_set_path='./Datasets/VOCdevkit/VOC2012/ImageSets/Main/',
+    train_dataset.parse_xml(annotations_path='./data/VOCdevkit/VOC2012/Annotations/',
+                            image_set_path='./data/VOCdevkit/VOC2012/ImageSets/Main/',
                             image_set='train.txt',
                             classes=classes,
                             exclude_truncated=False,
@@ -118,12 +125,12 @@ def train():
 
     n_train_samples = train_dataset.get_n_samples()
 
-    val_dataset = BatchGenerator(images_path='./Datasets/VOCdevkit/VOC2012/JPEGImages/',
+    val_dataset = BatchGenerator(images_path='./data/VOCdevkit/VOC2012/JPEGImages/',
                                  include_classes='all',
                                  box_output_format=['class_id', 'xmin', 'xmax', 'ymin', 'ymax'])
 
-    val_dataset.parse_xml(annotations_path='./Datasets/VOCdevkit/VOC2012/Annotations/',
-                          image_set_path='./Datasets/VOCdevkit/VOC2012/ImageSets/Main/',
+    val_dataset.parse_xml(annotations_path='./data/VOCdevkit/VOC2012/Annotations/',
+                          image_set_path='./data/VOCdevkit/VOC2012/ImageSets/Main/',
                           image_set='val.txt',
                           classes=classes,
                           exclude_truncated=False,
@@ -168,30 +175,24 @@ def train():
                                   validation_data=val_generator,
                                   validation_steps=ceil(n_val_samples / batch_size))
 
-    model_name = 'ssd300_0'
-    model.save('./{}.h5'.format(model_name))
-    model.save_weights('./{}_weights.h5'.format(model_name))
+    model.save(model_file)
+    model.save_weights(model_weights_file)
 
     print()
-    print("Model saved as {}.h5".format(model_name))
-    print("Weights also saved separately as {}_weights.h5".format(model_name))
+    print("Model saved as {}.h5".format(model_file))
+    print("Weights also saved separately as {}_weights.h5".format(model_weights_file))
     print()
 
 
 def predict():
     model, _ = build_model()
-    val_dataset = BatchGenerator(images_path='./Datasets/VOCdevkit/VOC2012/JPEGImages/',
+    model.load_weights(model_weights_file)
+    val_dataset = BatchGenerator(images_path='./data/VOCdevkit/VOC2012/JPEGImages/',
                                  include_classes='all',
                                  box_output_format=['class_id', 'xmin', 'xmax', 'ymin', 'ymax'])
-    classes = ['background',
-               'aeroplane', 'bicycle', 'bird', 'boat',
-               'bottle', 'bus', 'car', 'cat',
-               'chair', 'cow', 'diningtable', 'dog',
-               'horse', 'motorbike', 'person', 'pottedplant',
-               'sheep', 'sofa', 'train', 'tvmonitor']
 
-    val_dataset.parse_xml(annotations_path='./Datasets/VOCdevkit/VOC2012/Annotations/',
-                          image_set_path='./Datasets/VOCdevkit/VOC2012/ImageSets/Main/',
+    val_dataset.parse_xml(annotations_path='./data/VOCdevkit/VOC2012/Annotations/',
+                          image_set_path='./data/VOCdevkit/VOC2012/ImageSets/Main/',
                           image_set='val.txt',
                           classes=classes,
                           exclude_truncated=False,
