@@ -18,11 +18,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 '''
 
 import numpy as np
-from keras.models import Model
 from keras.layers import Input, Lambda, Activation, Conv2D, MaxPooling2D, Reshape, Concatenate
+from keras.models import Model
+from ssd.keras_layer_anchor_boxes import AnchorBoxes
 
-from keras_layer_anchor_boxes import AnchorBoxes
-from keras_layer_l2normalization import L2Normalization
+from ssd.keras_layer_l2normalization import L2Normalization
 
 
 def ssd_300(image_size,

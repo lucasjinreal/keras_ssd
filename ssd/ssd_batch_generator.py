@@ -574,7 +574,7 @@ class BatchGenerator:
                                 x_coords[x_coords < 0] = 0
                                 x_coords[x_coords >= random_crop[1]] = random_crop[1] - 1
                                 patch_y[:, [xmin, xmax]] = x_coords
-                        elif y_range >= 0 and x_range < 0:
+                        elif x_range < 0 <= y_range:
                             # Crop the image
                             patch_X = np.copy(batch_X[i][crop_ymin:crop_ymin + random_crop[
                                 0]])  # ...crop the vertical dimension just as before,...
@@ -594,7 +594,7 @@ class BatchGenerator:
                                 y_coords[y_coords < 0] = 0
                                 y_coords[y_coords >= random_crop[0]] = random_crop[0] - 1
                                 patch_y[:, [ymin, ymax]] = y_coords
-                        elif y_range < 0 and x_range >= 0:
+                        elif y_range < 0 <= x_range:
                             # Crop the image
                             patch_X = np.copy(batch_X[i][:, crop_xmin:crop_xmin + random_crop[
                                 1]])
@@ -881,8 +881,6 @@ class BatchGenerator:
                         y_coords[y_coords >= img_height] = img_height - 1
                         y_coords[y_coords < 0] = 0
                         targets[:, [2, 3]] = y_coords
-                        # Some objects might have gotten pushed so far outside the image boundaries in the transformation
-                        # process that they don't serve as useful training examples anymore, because too little of them is
                         # visible. We'll remove all boxes that we had to limit so much that their area is less than
                         # `include_thresh` of the box area before limiting.
                         before_area = (before_limiting[:, 1] - before_limiting[:, 0]) * (
@@ -912,8 +910,6 @@ class BatchGenerator:
                         y_coords[y_coords >= img_height] = img_height - 1
                         y_coords[y_coords < 0] = 0
                         targets[:, [2, 3]] = y_coords
-                        # Some objects might have gotten pushed so far outside the image boundaries in the transformation
-                        # process that they don't serve as useful training examples anymore, because too little of them is
                         # visible. We'll remove all boxes that we had to limit so much that their area is less than
                         # `include_thresh` of the box area before limiting.
                         before_area = (before_limiting[:, 1] - before_limiting[:, 0]) * (
@@ -923,7 +919,7 @@ class BatchGenerator:
 
             if crop:
                 image = image[crop[0]:img_height - crop[1], crop[2]:img_width - crop[3]]
-                if limit_boxes:  # Adjust boxes affected by cropping and remove those that will no longer be in the image
+                if limit_boxes:
                     before_limiting = np.copy(targets)
                     if crop[0] > 0:
                         y_coords = targets[:, [2, 3]]
